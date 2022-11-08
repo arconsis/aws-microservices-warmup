@@ -1,21 +1,29 @@
+locals {
+  autoscaling_settings = {
+    max_capacity       = 4
+    min_capacity       = 2
+    target_cpu_value   = 60
+    scale_in_cooldown  = 60
+    scale_out_cooldown = 900
+  }
+}
+
 provider "aws" {
-  shared_credentials_file = "$HOME/.aws/credentials"
-  profile                 = "default"
-  region                  = var.aws_region
+  shared_credentials_files = ["$HOME/.aws/credentials"]
+  profile                  = var.aws_profile
+  region                   = var.aws_region
+#  default_tags {
+#    tags = var.default_tags
+#  }
 }
 
 module "networking" {
   source               = "../common/modules/network"
-  create_vpc           = var.create_vpc
-  create_igw           = var.create_igw
-  single_nat_gateway   = var.single_nat_gateway
-  enable_nat_gateway   = var.enable_nat_gateway
   region               = var.aws_region
   vpc_name             = var.vpc_name
-  cidr_block           = var.cidr_block
-  availability_zones   = var.availability_zones
-  public_subnet_cidrs  = var.public_subnet_cidrs
-  private_subnet_cidrs = var.private_subnet_cidrs
+  vpc_cidr             = var.cidr_block
+  private_subnet_count = var.private_subnet_count
+  public_subnet_count  = var.public_subnet_count
 }
 
 ################################################################################
@@ -80,85 +88,130 @@ resource "aws_cloudwatch_log_group" "vpc_flow_logs" {
 }
 
 module "alb_sg" {
-  source                   = "../common/modules/security"
-  create_vpc               = var.create_vpc
-  create_sg                = true
-  sg_name                  = "load-balancer-security-group"
-  description              = "controls access to the ALB"
-  rule_ingress_description = "controls access to the ALB"
-  rule_egress_description  = "allow all outbound"
-  vpc_id                   = module.networking.vpc_id
-  ingress_cidr_blocks      = ["0.0.0.0/0"]
-  ingress_from_port        = 80
-  ingress_to_port          = 80
-  ingress_protocol         = "tcp"
-  egress_cidr_blocks       = ["0.0.0.0/0"]
-  egress_from_port         = 0
-  egress_to_port           = 0
-  egress_protocol          = "-1"
+  source            = "../common/modules/security"
+  sg_name           = "load-balancer-security-group"
+  description       = "controls access to the ALB"
+  vpc_id            = module.networking.vpc_id
+  egress_cidr_rules = {
+    1 = {
+      description      = "allow all outbound"
+      protocol         = "-1"
+      from_port        = 0
+      to_port          = 0
+      cidr_blocks      = ["0.0.0.0/0"]
+      ipv6_cidr_blocks = ["::/0"]
+    }
+  }
+  egress_source_sg_rules = {}
+  ingress_cidr_rules     = {
+    1 = {
+      description      = "controls access to the ALB"
+      protocol         = "tcp"
+      from_port        = 80
+      to_port          = 80
+      cidr_blocks      = ["0.0.0.0/0"]
+      ipv6_cidr_blocks = ["::/0"]
+    }
+  }
+  ingress_source_sg_rules = {}
 }
 
 module "ecs_tasks_sg" {
-  source                           = "../common/modules/security"
-  create_vpc                       = var.create_vpc
-  create_sg                        = true
-  sg_name                          = "ecs-tasks-security-group"
-  description                      = "controls access to the ECS tasks"
-  rule_ingress_description         = "allow inbound access from the ALB only"
-  rule_egress_description          = "allow all outbound"
-  vpc_id                           = module.networking.vpc_id
-  ingress_cidr_blocks              = null
-  ingress_from_port                = 0
-  ingress_to_port                  = 0
-  ingress_protocol                 = "-1"
-  ingress_source_security_group_id = module.alb_sg.security_group_id
-  egress_cidr_blocks               = ["0.0.0.0/0"]
-  egress_from_port                 = 0
-  egress_to_port                   = 0
-  egress_protocol                  = "-1"
+  source            = "../common/modules/security"
+  sg_name           = "ecs-tasks-security-group"
+  description       = "controls access to the ECS tasks"
+  vpc_id            = module.networking.vpc_id
+  egress_cidr_rules = {
+    1 = {
+      description      = "allow all outbound"
+      protocol         = "-1"
+      from_port        = 0
+      to_port          = 0
+      cidr_blocks      = ["0.0.0.0/0"]
+      ipv6_cidr_blocks = ["::/0"]
+    }
+  }
+  egress_source_sg_rules  = {}
+  ingress_source_sg_rules = {
+    1 = {
+      description              = "allow inbound access from the ALB only"
+      protocol                 = "-1"
+      from_port                = 0
+      to_port                  = 0
+      source_security_group_id = module.alb_sg.security_group_id
+    }
+  }
+  ingress_cidr_rules = {}
 }
 
 module "private_ecs_tasks_sg" {
-  source                   = "../common/modules/security"
-  create_vpc               = var.create_vpc
-  create_sg                = true
-  sg_name                  = "ecs-private-tasks-security-group"
-  description              = "controls access to the private ECS tasks (not internet facing)"
-  rule_ingress_description = "allow inbound access only from resources in VPC"
-  rule_egress_description  = "allow all outbound"
-  vpc_id                   = module.networking.vpc_id
-  ingress_cidr_blocks      = [var.cidr_block]
-  ingress_from_port        = 0
-  ingress_to_port          = 0
-  ingress_protocol         = "-1"
-  egress_cidr_blocks       = ["0.0.0.0/0"]
-  egress_from_port         = 0
-  egress_to_port           = 0
-  egress_protocol          = "-1"
+  source            = "../common/modules/security"
+  sg_name           = "ecs-private-tasks-security-group"
+  description       = "controls access to the private ECS tasks (not internet facing)"
+  vpc_id            = module.networking.vpc_id
+  egress_cidr_rules = {
+    1 = {
+      description      = "allow all outbound"
+      protocol         = "-1"
+      from_port        = 0
+      to_port          = 0
+      cidr_blocks      = ["0.0.0.0/0"]
+      ipv6_cidr_blocks = ["::/0"]
+    }
+  }
+  egress_source_sg_rules = {}
+  ingress_cidr_rules     = {
+    1 = {
+      description      = "allow inbound access only from resources in VPC"
+      protocol         = "tcp"
+      from_port        = 0
+      to_port          = 0
+      cidr_blocks      = [module.networking.vpc_cidr_block]
+      ipv6_cidr_blocks = [module.networking.vpc_ipv6_cidr_block]
+    }
+  }
+  ingress_source_sg_rules = {}
 }
 
 module "private_database_sg" {
-  source                   = "../common/modules/security"
-  create_vpc               = var.create_vpc
-  create_sg                = true
-  sg_name                  = "private-database-security-group"
-  description              = "Controls access to the private database (not internet facing)"
-  rule_ingress_description = "allow inbound access only from resources in VPC"
-  rule_egress_description  = "allow all outbound"
-  vpc_id                   = module.networking.vpc_id
-  ingress_cidr_blocks      = [var.cidr_block]
-  ingress_from_port        = 0
-  ingress_to_port          = 0
-  ingress_protocol         = "-1"
-  egress_cidr_blocks       = ["0.0.0.0/0"]
-  egress_from_port         = 0
-  egress_to_port           = 0
-  egress_protocol          = "-1"
+  source            = "../common/modules/security"
+  sg_name           = "private-database-security-group"
+  description       = "Controls access to the private database (not internet facing)"
+  vpc_id            = module.networking.vpc_id
+  egress_cidr_rules = {
+    1 = {
+      description      = "allow all outbound"
+      protocol         = "-1"
+      from_port        = 0
+      to_port          = 0
+      cidr_blocks      = ["0.0.0.0/0"]
+      ipv6_cidr_blocks = ["::/0"]
+    }
+  }
+  egress_source_sg_rules  = {}
+  ingress_source_sg_rules = {
+    1 = {
+      description              = "allow inbound access only from task SG"
+      protocol                 = "tcp"
+      from_port                = 0
+      #     We should create separate SGs for every db as they could have different ports. In this case all have PGs 5432
+      to_port                  = module.books_database.db_instance_port
+      source_security_group_id = module.ecs_tasks_sg.security_group_id
+    }
+    2 = {
+      description              = "allow inbound access only from private task SG"
+      protocol                 = "tcp"
+      from_port                = 0
+      #     We should create separate SGs for every db as they could have different ports. In this case all have PGs 5432
+      to_port                  = module.books_database.db_instance_port
+      source_security_group_id = module.private_ecs_tasks_sg.security_group_id
+    }
+  }
+  ingress_cidr_rules = {}
 }
 
 module "public_alb" {
   source             = "../common/modules/alb"
-  create_alb         = var.create_alb
   load_balancer_type = "application"
   alb_name           = "main-ecs-lb"
   internal           = false
@@ -167,9 +220,9 @@ module "public_alb" {
   subnet_ids         = module.networking.public_subnet_ids
   http_tcp_listeners = [
     {
-      port        = 80
-      protocol    = "HTTP"
-      action_type = "fixed-response"
+      port           = 80
+      protocol       = "HTTP"
+      action_type    = "fixed-response"
       fixed_response = {
         content_type = "text/plain"
         message_body = "Resource not found"
@@ -197,7 +250,8 @@ resource "aws_service_discovery_private_dns_namespace" "segment" {
 # Databases Secrets
 # https://www.sufle.io/blog/keeping-secrets-as-secret-on-amazon-ecs-using-terraform
 resource "aws_secretsmanager_secret" "books_database_password_secret" {
-  name = "books_database_master_password"
+  name                    = "books_database_master_password"
+  recovery_window_in_days = 0
 }
 
 resource "aws_secretsmanager_secret_version" "books_database_password_secret_version" {
@@ -206,7 +260,8 @@ resource "aws_secretsmanager_secret_version" "books_database_password_secret_ver
 }
 
 resource "aws_secretsmanager_secret" "books_database_username_secret" {
-  name = "books_database_master_username"
+  name                    = "books_database_master_username"
+  recovery_window_in_days = 0
 }
 
 resource "aws_secretsmanager_secret_version" "books_database_username_secret_version" {
@@ -215,7 +270,8 @@ resource "aws_secretsmanager_secret_version" "books_database_username_secret_ver
 }
 
 resource "aws_secretsmanager_secret" "users_database_password_secret" {
-  name = "users_database_master_password"
+  name                    = "users_database_master_password"
+  recovery_window_in_days = 0
 }
 
 resource "aws_secretsmanager_secret_version" "users_database_password_secret_version" {
@@ -224,7 +280,8 @@ resource "aws_secretsmanager_secret_version" "users_database_password_secret_ver
 }
 
 resource "aws_secretsmanager_secret" "users_database_username_secret" {
-  name = "users_database_master_username"
+  name                    = "users_database_master_username"
+  recovery_window_in_days = 0
 }
 
 resource "aws_secretsmanager_secret_version" "users_database_username_secret_version" {
@@ -233,7 +290,8 @@ resource "aws_secretsmanager_secret_version" "users_database_username_secret_ver
 }
 
 resource "aws_secretsmanager_secret" "recommendations_database_password_secret" {
-  name = "recommendations_database_master_password"
+  name                    = "recommendations_database_master_password"
+  recovery_window_in_days = 0
 }
 
 resource "aws_secretsmanager_secret_version" "recommendations_database_password_secret_version" {
@@ -242,7 +300,8 @@ resource "aws_secretsmanager_secret_version" "recommendations_database_password_
 }
 
 resource "aws_secretsmanager_secret" "recommendations_database_username_secret" {
-  name = "recommendations_database_master_username"
+  name                    = "recommendations_database_master_username"
+  recovery_window_in_days = 0
 }
 
 resource "aws_secretsmanager_secret_version" "recommendations_database_username_secret_version" {
@@ -279,33 +338,36 @@ resource "aws_iam_role_policy" "password_policy_secretsmanager" {
 
 # Books Database
 module "books_database" {
-  source                = "../common/modules/database"
-  database_identifier   = "books-database"
-  database_username     = var.books_database_username
-  database_password     = var.books_database_password
-  subnet_ids            = module.networking.private_subnet_ids
-  security_group_ids    = [module.private_database_sg.security_group_id]
-  monitoring_role_name  = "BooksDatabaseMonitoringRole"
+  source               = "../common/modules/database"
+  database_identifier  = "books-database"
+  database_name        = var.books_database_name
+  database_username    = var.books_database_username
+  database_password    = var.books_database_password
+  subnet_ids           = module.networking.private_subnet_ids
+  security_group_ids   = [module.private_database_sg.security_group_id]
+  monitoring_role_name = "BooksDatabaseMonitoringRole"
 }
 # Recommendations Database
 module "recommendations_database" {
-  source                = "../common/modules/database"
-  database_identifier   = "recommendations-database"
-  database_username     = var.recommendations_database_username
-  database_password     = var.recommendations_database_password
-  subnet_ids            = module.networking.private_subnet_ids
-  security_group_ids    = [module.private_database_sg.security_group_id]
-  monitoring_role_name  = "RecommendationsDatabaseMonitoringRole"
+  source               = "../common/modules/database"
+  database_identifier  = "recommendations-database"
+  database_name        = var.recommendations_database_name
+  database_username    = var.recommendations_database_username
+  database_password    = var.recommendations_database_password
+  subnet_ids           = module.networking.private_subnet_ids
+  security_group_ids   = [module.private_database_sg.security_group_id]
+  monitoring_role_name = "RecommendationsDatabaseMonitoringRole"
 }
 # Users Database
 module "users_database" {
-  source                = "../common/modules/database"
-  database_identifier   = "users-database"
-  database_username     = var.users_database_username
-  database_password     = var.users_database_password
-  subnet_ids            = module.networking.private_subnet_ids
-  security_group_ids    = [module.private_database_sg.security_group_id]
-  monitoring_role_name  = "UsersDatabaseMonitoringRole"
+  source               = "../common/modules/database"
+  database_identifier  = "users-database"
+  database_name        = var.users_database_name
+  database_username    = var.users_database_username
+  database_password    = var.users_database_password
+  subnet_ids           = module.networking.private_subnet_ids
+  security_group_ids   = [module.private_database_sg.security_group_id]
+  monitoring_role_name = "UsersDatabaseMonitoringRole"
 }
 
 ################################################################################
@@ -317,7 +379,7 @@ module "ecs_books_api_fargate" {
   vpc_id                                  = module.networking.vpc_id
   cluster_id                              = module.ecs_cluster.cluster_id
   cluster_name                            = module.ecs_cluster.cluster_name
-  has_discovery                           = true
+  enable_discovery                        = true
   dns_namespace_id                        = aws_service_discovery_private_dns_namespace.segment.id
   service_security_groups_ids             = [module.ecs_tasks_sg.security_group_id]
   subnet_ids                              = module.networking.private_subnet_ids
@@ -328,59 +390,67 @@ module "ecs_books_api_fargate" {
   fargate_cpu                             = var.fargate_cpu
   fargate_memory                          = var.fargate_memory
   health_check_grace_period_seconds       = var.health_check_grace_period_seconds
-  service_name                            = var.books_api_name
-  service_image                           = var.books_api_image
-  service_aws_logs_group                  = var.books_api_aws_logs_group
-  service_port                            = var.books_api_port
-  service_desired_count                   = var.books_api_desired_count
-  service_max_count                       = var.books_api_max_count
-  service_task_family                     = var.books_api_task_family
-  service_enviroment_variables = [
-    {
-      "name" : "POSTGRES_HOST",
-      "value" : "${tostring(module.books_database.db_instance_address)}",
-    },
-    {
-      "name" : "POSTGRES_DB",
-      "value" : "${tostring(module.books_database.db_instance_name)}",
-    },
-    {
-      "name" : "POSTGRES_PORT",
-      "value" : "${tostring(module.books_database.db_instance_port)}",
+
+  task_compatibilities = var.books_api_task_compatibilities
+  launch_type          = var.books_api_launch_type
+
+  enable_autoscaling   = true
+  autoscaling_settings = merge(local.autoscaling_settings, {
+    autoscaling_name = "${var.books_api_name}_scaling"
+  })
+  enable_alb   = true
+  alb_listener = module.public_alb.alb_listener
+  alb          = {
+    listener = {
+      tg_paths      = var.books_api_tg_paths
+      tg            = var.books_api_tg
+      port          = 80
+      protocol      = "HTTP"
+      target_type   = "ip"
+      arn           = module.public_alb.alb_listener_http_tcp_arn
+      rule_priority = 1
+      rule_type     = "forward"
     }
-  ]
-  service_secrets_variables = [
-    {
-      "name" : "POSTGRES_USER",
-      "valueFrom" : "${aws_secretsmanager_secret.books_database_username_secret.arn}",
-    },
-    {
-      "name": "POSTGRES_PASSWORD",
-      "valueFrom": "${aws_secretsmanager_secret.books_database_password_secret.arn}",
-    }
-  ]
-  service_health_check_path               = var.books_api_health_check_path
-  network_mode                            = var.books_api_network_mode
-  task_compatibilities                    = var.books_api_task_compatibilities
-  launch_type                             = var.books_api_launch_type
-  alb_listener                            = module.public_alb.alb_listener
-  has_alb                                 = true
-  alb_listener_tg                         = var.books_api_tg
-  alb_listener_port                       = 80
-  alb_listener_protocol                   = "HTTP"
-  alb_listener_target_type                = "ip"
-  alb_listener_arn                        = module.public_alb.alb_listener_http_tcp_arn
-  alb_listener_rule_priority              = 1
-  alb_listener_rule_type                  = "forward"
-  alb_service_tg_paths                    = var.books_api_tg_paths
-  enable_autoscaling                      = true
-  autoscaling_name                        = "${var.books_api_name}_scaling"
-  autoscaling_settings = {
-    max_capacity       = 4
-    min_capacity       = 2
-    target_cpu_value   = 60
-    scale_in_cooldown  = 60
-    scale_out_cooldown = 900
+  }
+  service = {
+    name          = var.books_api_name
+    desired_count = var.books_api_desired_count
+    max_count     = var.books_api_max_count
+  }
+  task_definition = {
+    name              = var.books_api_name
+    image             = var.books_api_image
+    aws_logs_group    = var.books_api_aws_logs_group
+    host_port         = var.books_api_port
+    container_port    = var.books_api_port
+    container_name    = var.books_api_name
+    health_check_path = var.books_api_health_check_path
+    family            = var.books_api_task_family
+    network_mode      = var.books_api_network_mode
+    env_vars          = [
+      {
+        "name" : "POSTGRES_HOST",
+        "value" : tostring(module.books_database.db_instance_address),
+      },
+      {
+        "name" : "POSTGRES_DB",
+        "value" : tostring(module.books_database.db_instance_name),
+      },
+      {
+        "name" : "POSTGRES_PORT",
+        "value" : tostring(module.books_database.db_instance_port),
+      }
+    ]
+    secret_vars = [
+      {
+        "name" : "POSTGRES_USER",
+        "valueFrom" : aws_secretsmanager_secret.books_database_username_secret.arn,
+      },
+      {
+        "name" : "POSTGRES_PASSWORD",
+        "valueFrom" : aws_secretsmanager_secret.books_database_password_secret.arn,
+      }
+    ]
   }
 }
 
@@ -393,7 +463,7 @@ module "ecs_promotions_api_fargate" {
   vpc_id                                  = module.networking.vpc_id
   cluster_id                              = module.ecs_cluster.cluster_id
   cluster_name                            = module.ecs_cluster.cluster_name
-  has_discovery                           = true
+  enable_discovery                        = true
   dns_namespace_id                        = aws_service_discovery_private_dns_namespace.segment.id
   service_security_groups_ids             = [module.ecs_tasks_sg.security_group_id]
   subnet_ids                              = module.networking.private_subnet_ids
@@ -404,36 +474,45 @@ module "ecs_promotions_api_fargate" {
   fargate_cpu                             = var.fargate_cpu
   fargate_memory                          = var.fargate_memory
   health_check_grace_period_seconds       = var.health_check_grace_period_seconds
-  service_name                            = var.promotions_api_name
-  service_image                           = var.promotions_api_image
-  service_aws_logs_group                  = var.promotions_api_aws_logs_group
-  service_port                            = var.promotions_api_port
-  service_desired_count                   = var.promotions_api_desired_count
-  service_max_count                       = var.promotions_api_max_count
-  service_task_family                     = var.promotions_api_task_family
-  service_enviroment_variables            = []
-  service_health_check_path               = var.promotions_api_health_check_path
-  network_mode                            = var.promotions_api_network_mode
-  task_compatibilities                    = var.promotions_api_task_compatibilities
-  launch_type                             = var.promotions_api_launch_type
-  alb_listener                            = module.public_alb.alb_listener
-  has_alb                                 = true
-  alb_listener_tg                         = var.promotions_api_tg
-  alb_listener_port                       = 80
-  alb_listener_protocol                   = "HTTP"
-  alb_listener_target_type                = "ip"
-  alb_listener_arn                        = module.public_alb.alb_listener_http_tcp_arn
-  alb_listener_rule_priority              = 3
-  alb_listener_rule_type                  = "forward"
-  alb_service_tg_paths                    = var.promotions_api_tg_paths
-  enable_autoscaling                      = true
-  autoscaling_name                        = "${var.promotions_api_name}_scaling"
-  autoscaling_settings = {
-    max_capacity       = 4
-    min_capacity       = 2
-    target_cpu_value   = 60
-    scale_in_cooldown  = 60
-    scale_out_cooldown = 900
+
+  task_compatibilities = var.promotions_api_task_compatibilities
+  launch_type          = var.promotions_api_launch_type
+
+  enable_autoscaling   = true
+  autoscaling_settings = merge(local.autoscaling_settings, {
+    autoscaling_name = "${var.promotions_api_name}_scaling"
+  })
+  enable_alb   = true
+  alb_listener = module.public_alb.alb_listener
+  alb          = {
+    listener = {
+      tg_paths      = var.promotions_api_tg_paths
+      tg            = var.promotions_api_tg
+      port          = 80
+      protocol      = "HTTP"
+      target_type   = "ip"
+      arn           = module.public_alb.alb_listener_http_tcp_arn
+      rule_priority = 2
+      rule_type     = "forward"
+    }
+  }
+  service = {
+    name          = var.promotions_api_name
+    desired_count = var.promotions_api_desired_count
+    max_count     = var.promotions_api_max_count
+  }
+  task_definition = {
+    name              = var.promotions_api_name
+    image             = var.promotions_api_image
+    aws_logs_group    = var.promotions_api_aws_logs_group
+    host_port         = var.promotions_api_port
+    container_port    = var.promotions_api_port
+    container_name    = var.promotions_api_name
+    health_check_path = var.promotions_api_health_check_path
+    family            = var.promotions_api_task_family
+    network_mode      = var.promotions_api_network_mode
+    env_vars          = []
+    secret_vars       = []
   }
 }
 
@@ -446,9 +525,9 @@ module "ecs_recommendations_api_fargate" {
   vpc_id                                  = module.networking.vpc_id
   cluster_id                              = module.ecs_cluster.cluster_id
   cluster_name                            = module.ecs_cluster.cluster_name
-  has_discovery                           = true
+  enable_discovery                        = true
   dns_namespace_id                        = aws_service_discovery_private_dns_namespace.segment.id
-  service_security_groups_ids             = [module.private_ecs_tasks_sg.security_group_id]
+  service_security_groups_ids             = [module.ecs_tasks_sg.security_group_id]
   subnet_ids                              = module.networking.private_subnet_ids
   assign_public_ip                        = false
   iam_role_ecs_task_execution_role        = aws_iam_role.ecs_task_execution_role
@@ -457,59 +536,56 @@ module "ecs_recommendations_api_fargate" {
   fargate_cpu                             = var.fargate_cpu
   fargate_memory                          = var.fargate_memory
   health_check_grace_period_seconds       = var.health_check_grace_period_seconds
-  service_name                            = var.recommendations_api_name
-  service_image                           = var.recommendations_api_image
-  service_aws_logs_group                  = var.recommendations_api_aws_logs_group
-  service_port                            = var.recommendations_api_port
-  service_desired_count                   = var.recommendations_api_desired_count
-  service_max_count                       = var.recommendations_api_max_count
-  service_task_family                     = var.recommendations_api_task_family
-  service_enviroment_variables = [
-    {
-      "name" : "POSTGRES_HOST",
-      "value" : "${tostring(module.recommendations_database.db_instance_address)}",
-    },
-    {
-      "name" : "POSTGRES_DB",
-      "value" : "${tostring(module.recommendations_database.db_instance_name)}",
-    },
-    {
-      "name" : "POSTGRES_PORT",
-      "value" : "${tostring(module.recommendations_database.db_instance_port)}",
-    }
-  ]
-  service_secrets_variables = [
-    {
-      "name" : "POSTGRES_USER",
-      "valueFrom" : "${aws_secretsmanager_secret.recommendations_database_username_secret.arn}",
-    },
-    {
-      "name": "POSTGRES_PASSWORD",
-      "valueFrom": "${aws_secretsmanager_secret.recommendations_database_password_secret.arn}",
-    }
-  ]
-  service_health_check_path               = null
-  network_mode                            = var.recommendations_api_network_mode
-  task_compatibilities                    = var.recommendations_api_task_compatibilities
-  launch_type                             = var.recommendations_api_launch_type
-  alb_listener                            = module.public_alb.alb_listener
-  has_alb                                 = false
-  alb_listener_tg                         = null
-  alb_listener_port                       = null
-  alb_listener_protocol                   = null
-  alb_listener_target_type                = null
-  alb_listener_arn                        = null
-  alb_listener_rule_priority              = null
-  alb_listener_rule_type                  = "forward"
-  alb_service_tg_paths                    = []
-  enable_autoscaling                      = true
-  autoscaling_name                        = "${var.recommendations_api_name}_scaling"
-  autoscaling_settings = {
-    max_capacity       = 4
-    min_capacity       = 2
-    target_cpu_value   = 60
-    scale_in_cooldown  = 60
-    scale_out_cooldown = 900
+
+  task_compatibilities = var.recommendations_api_task_compatibilities
+  launch_type          = var.recommendations_api_launch_type
+
+  enable_autoscaling   = true
+  autoscaling_settings = merge(local.autoscaling_settings, {
+    autoscaling_name = "${var.recommendations_api_name}_scaling"
+  })
+  enable_alb   = false
+  alb_listener = null
+  alb          = null
+  service      = {
+    name          = var.recommendations_api_name
+    desired_count = var.recommendations_api_desired_count
+    max_count     = var.recommendations_api_max_count
+  }
+  task_definition = {
+    name              = var.recommendations_api_name
+    image             = var.recommendations_api_image
+    aws_logs_group    = var.recommendations_api_aws_logs_group
+    host_port         = var.recommendations_api_port
+    container_port    = var.recommendations_api_port
+    container_name    = var.recommendations_api_name
+    health_check_path = var.recommendations_api_health_check_path
+    family            = var.recommendations_api_task_family
+    network_mode      = var.recommendations_api_network_mode
+    env_vars          = [
+      {
+        "name" : "POSTGRES_HOST",
+        "value" : tostring(module.recommendations_database.db_instance_address),
+      },
+      {
+        "name" : "POSTGRES_DB",
+        "value" : tostring(module.recommendations_database.db_instance_name),
+      },
+      {
+        "name" : "POSTGRES_PORT",
+        "value" : tostring(module.recommendations_database.db_instance_port),
+      }
+    ]
+    secret_vars = [
+      {
+        "name" : "POSTGRES_USER",
+        "valueFrom" : aws_secretsmanager_secret.recommendations_database_username_secret.arn,
+      },
+      {
+        "name" : "POSTGRES_PASSWORD",
+        "valueFrom" : aws_secretsmanager_secret.recommendations_database_password_secret.arn,
+      }
+    ]
   }
 }
 
@@ -522,7 +598,7 @@ module "ecs_users_api_fargate" {
   vpc_id                                  = module.networking.vpc_id
   cluster_id                              = module.ecs_cluster.cluster_id
   cluster_name                            = module.ecs_cluster.cluster_name
-  has_discovery                           = true
+  enable_discovery                        = true
   dns_namespace_id                        = aws_service_discovery_private_dns_namespace.segment.id
   service_security_groups_ids             = [module.ecs_tasks_sg.security_group_id]
   subnet_ids                              = module.networking.private_subnet_ids
@@ -533,62 +609,66 @@ module "ecs_users_api_fargate" {
   fargate_cpu                             = var.fargate_cpu
   fargate_memory                          = var.fargate_memory
   health_check_grace_period_seconds       = var.health_check_grace_period_seconds
-  service_name                            = var.users_api_name
-  service_image                           = var.users_api_image
-  service_aws_logs_group                  = var.users_api_aws_logs_group
-  service_port                            = var.users_api_port
-  service_desired_count                   = var.users_api_desired_count
-  service_max_count                       = var.users_api_max_count
-  service_task_family                     = var.users_api_task_family
-  service_enviroment_variables = [
-    {
-      "name" : "RECOMMENDATIONS_SERVICE_URL",
-      "value" : "http://${module.ecs_recommendations_api_fargate.aws_service_discovery_service_name}.${aws_service_discovery_private_dns_namespace.segment.name}:${var.recommendations_api_port}"
-    },
-    {
-      "name" : "POSTGRES_HOST",
-      "value" : "${tostring(module.users_database.db_instance_address)}",
-    },
-    {
-      "name" : "POSTGRES_DB",
-      "value" : "${tostring(module.users_database.db_instance_name)}",
-    },
-    {
-      "name" : "POSTGRES_PORT",
-      "value" : "${tostring(module.users_database.db_instance_port)}",
+
+  task_compatibilities = var.users_api_task_compatibilities
+  launch_type          = var.users_api_launch_type
+
+  enable_autoscaling   = true
+  autoscaling_settings = merge(local.autoscaling_settings, {
+    autoscaling_name = "${var.users_api_name}_scaling"
+  })
+  enable_alb   = true
+  alb_listener = module.public_alb.alb_listener
+  alb          = {
+    listener = {
+      tg_paths      = var.users_api_tg_paths
+      tg            = var.users_api_tg
+      port          = 80
+      protocol      = "HTTP"
+      target_type   = "ip"
+      arn           = module.public_alb.alb_listener_http_tcp_arn
+      rule_priority = 3
+      rule_type     = "forward"
     }
-  ]
-  service_secrets_variables = [
-    {
-      "name" : "POSTGRES_USER",
-      "valueFrom" : "${aws_secretsmanager_secret.users_database_username_secret.arn}",
-    },
-    {
-      "name": "POSTGRES_PASSWORD",
-      "valueFrom": "${aws_secretsmanager_secret.users_database_password_secret.arn}",
-    }
-  ]
-  service_health_check_path               = var.users_api_health_check_path
-  network_mode                            = var.users_api_network_mode
-  task_compatibilities                    = var.users_api_task_compatibilities
-  launch_type                             = var.users_api_launch_type
-  alb_listener                            = module.public_alb.alb_listener
-  has_alb                                 = true
-  alb_listener_tg                         = var.users_api_tg
-  alb_listener_port                       = 80
-  alb_listener_protocol                   = "HTTP"
-  alb_listener_target_type                = "ip"
-  alb_listener_arn                        = module.public_alb.alb_listener_http_tcp_arn
-  alb_listener_rule_priority              = 2
-  alb_listener_rule_type                  = "forward"
-  alb_service_tg_paths                    = var.users_api_tg_paths
-  enable_autoscaling                      = true
-  autoscaling_name                        = "${var.users_api_name}_scaling"
-  autoscaling_settings = {
-    max_capacity       = 4
-    min_capacity       = 2
-    target_cpu_value   = 60
-    scale_in_cooldown  = 60
-    scale_out_cooldown = 900
+  }
+  service = {
+    name          = var.users_api_name
+    desired_count = var.users_api_desired_count
+    max_count     = var.users_api_max_count
+  }
+  task_definition = {
+    name              = var.users_api_name
+    image             = var.users_api_image
+    aws_logs_group    = var.users_api_aws_logs_group
+    host_port         = var.users_api_port
+    container_port    = var.users_api_port
+    container_name    = var.users_api_name
+    health_check_path = var.users_api_health_check_path
+    family            = var.users_api_task_family
+    network_mode      = var.users_api_network_mode
+    env_vars          = [
+      {
+        "name" : "POSTGRES_HOST",
+        "value" : tostring(module.users_database.db_instance_address),
+      },
+      {
+        "name" : "POSTGRES_DB",
+        "value" : tostring(module.users_database.db_instance_name),
+      },
+      {
+        "name" : "POSTGRES_PORT",
+        "value" : tostring(module.users_database.db_instance_port),
+      }
+    ]
+    secret_vars = [
+      {
+        "name" : "POSTGRES_USER",
+        "valueFrom" : aws_secretsmanager_secret.users_database_username_secret.arn,
+      },
+      {
+        "name" : "POSTGRES_PASSWORD",
+        "valueFrom" : aws_secretsmanager_secret.users_database_password_secret.arn,
+      }
+    ]
   }
 }

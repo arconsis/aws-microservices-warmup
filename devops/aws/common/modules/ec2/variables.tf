@@ -1,5 +1,5 @@
-variable "launch_configuration_name" {
-  description = "Name of launch configuration"
+variable "lauch_template_name" {
+  description = "Name of launch template"
   type        = string
 }
 
@@ -18,8 +18,8 @@ variable "assign_public_ip" {
   type        = bool
 }
 
-variable "project" {
-  description = "Project name"
+variable "ecs_cluster_name" {
+  description = "ECS cluster name"
   type        = string
 }
 

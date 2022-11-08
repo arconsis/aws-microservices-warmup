@@ -3,79 +3,38 @@
 ################################################################################
 variable "aws_region" {
   description = "The AWS region things are created in"
-  default     = "eu-west-2"
+  default     = "eu-west-1"
 }
-//variable "docker_repo" {}
+
+variable "aws_profile" {
+  description = "The AWS profile name"
+  default     = "arconsis"
+}
 
 ################################################################################
 # Network Configuration
+################################################################################
 ################################################################################
 variable "vpc_name" {
   description = "The name of the VPC. Other names will result from this."
   default     = "ms-vpc"
 }
 
-variable "create_vpc" {
-  description = "Flag to define if we have to create vpc"
-  type        = bool
-  default     = true
+variable "public_subnet_count" {
+  type        = number
+  description = "Public subnet count"
+  default     = 2
 }
 
-variable "create_igw" {
-  description = "Flag to define if we have to create IG"
-  type        = bool
-  default     = true
-}
-
-variable "single_nat_gateway" {
-  description = "Flag to define if we need only one NAT GW"
-  type        = bool
-  default     = false
-}
-
-variable "enable_nat_gateway" {
-  description = "Flag to define enable NAT GW"
-  type        = bool
-  default     = true
+variable "private_subnet_count" {
+  type        = number
+  description = "Private subnet count"
+  default     = 2
 }
 
 variable "cidr_block" {
   description = "Network IP range"
-  default     = "192.168.0.0/16"
-}
-
-variable "availability_zones" {
-  description = "List of availability zones you want. Example: eu-west-2a and eu-west-2b"
-  default     = ["eu-west-2a", "eu-west-2b"]
-}
-
-variable "public_subnet_cidrs" {
-  description = "List of public cidrs, for every availability zone you want you need one. Example: 10.0.0.0/24 and 10.0.1.0/24"
-  default     = ["192.168.0.0/19", "192.168.32.0/19"]
-}
-
-variable "private_subnet_cidrs" {
-  description = "List of private cidrs, for every availability zone you want you need one. Example: 10.0.0.0/24 and 10.0.1.0/24"
-  default     = ["192.168.128.0/19", "192.168.160.0/19"]
-}
-
-variable "enable_dns_support" {
-  description = "DNS support"
-  default     = true
-}
-
-variable "enable_dns_hostnames" {
-  description = "DNS hostnames"
-  default     = true
-}
-
-################################################################################
-# ALB
-################################################################################
-variable "create_alb" {
-  description = "Flag to define if we have to create ALB"
-  type        = bool
-  default     = true
+  default     = "10.0.0.0/16"
 }
 
 ################################################################################
@@ -88,7 +47,17 @@ variable "project" {
 
 variable "environment" {
   description = "Indicate the environment"
-  default     = "dec"
+  default     = "dev"
+}
+
+variable "default_tags" {
+  description = "Default tags to set to every resource"
+  type        = map(string)
+  default     = {
+    Project     = "ecs-ec2-aws-warmup"
+    ManagedBy   = "terraform"
+    Environment = "dev"
+  }
 }
 
 ################################################################################
@@ -143,7 +112,7 @@ variable "books_api_name" {
 
 variable "books_api_image" {
   description = "Defines service image"
-  default     = "eldimious/books:latest"
+  default     = "143441946271.dkr.ecr.eu-west-1.amazonaws.com/books:latest"
 }
 
 variable "books_api_aws_logs_group" {
@@ -391,7 +360,15 @@ variable "discovery_routing_policy" {
 ################################################################################
 # Database Configuration
 ################################################################################
+
 # Books DB
+variable "books_database_name" {
+  description = "The name for the books DB"
+  type        = string
+  default     = "postgres"
+}
+
+
 variable "books_database_username" {
   description = "The username for the books DB master"
   type        = string
@@ -405,6 +382,13 @@ variable "books_database_password" {
 }
 
 # Recommendations DB
+
+variable "recommendations_database_name" {
+  description = "The name for the recommendations DB"
+  type        = string
+  default     = "postgres"
+}
+
 variable "recommendations_database_username" {
   description = "The username for the recommendations DB master"
   type        = string
@@ -428,4 +412,10 @@ variable "users_database_password" {
   description = "The password for the users DB master"
   type        = string
   sensitive   = true
+}
+
+variable "users_database_name" {
+  description = "The name for the users DB"
+  type        = string
+  default     = "postgres"
 }

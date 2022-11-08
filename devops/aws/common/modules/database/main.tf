@@ -1,13 +1,21 @@
+resource "aws_db_subnet_group" "db_subnet_group" {
+  subnet_ids = var.subnet_ids
+}
+
 module "database" {
-  source = "terraform-aws-modules/rds/aws"
-  version = "~> 3.5"
+  source  = "terraform-aws-modules/rds/aws"
+  version = "~> 4.1.3"
+
+  tags = {
+    Name = "${var.database_identifier}-aws-warmup-db"
+  }
 
   identifier = var.database_identifier
 
   engine                     = var.database_engine
   engine_version             = var.database_engine_version
   auto_minor_version_upgrade = var.database_auto_minor_version_upgrade
-  family                     = var.database_family # DB parameter group
+  family                     = var.database_family                      # DB parameter group
   major_engine_version       = var.database_engine_major_engine_version # DB option group
   instance_class             = var.database_instance_class
 
@@ -18,13 +26,16 @@ module "database" {
   # NOTE: Do NOT use 'user' as the value for 'username' as it throws:
   # "Error creating DB Instance: InvalidParameterValue: MasterUsername
   # user cannot be used as it is a reserved word used by the engine"
-  name     = var.database_name
+  db_name  = var.database_name
   username = var.database_username
   password = var.database_password
   port     = var.database_port
 
-  multi_az               = true
+  create_random_password = false
+
+  multi_az               = var.multi_az
   subnet_ids             = var.subnet_ids
+  db_subnet_group_name   = aws_db_subnet_group.db_subnet_group.name
   vpc_security_group_ids = var.security_group_ids
 
   maintenance_window              = var.database_maintenance_window
@@ -52,13 +63,13 @@ module "database" {
     }
   ], var.database_parameters)
 
-  db_option_group_tags    = {
+  db_option_group_tags = {
     "Sensitive" = "low"
   }
   db_parameter_group_tags = {
     "Sensitive" = "low"
   }
-  db_subnet_group_tags    = {
+  db_subnet_group_tags = {
     "Sensitive" = "high"
   }
 }

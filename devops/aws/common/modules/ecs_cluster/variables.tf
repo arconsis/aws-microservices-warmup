@@ -6,7 +6,6 @@ variable "project" {
 variable "create_capacity_provider" {
   description = "Controls if need to create capacity provider"
   type        = bool
-
 }
 
 variable "capacity_provider_name" {

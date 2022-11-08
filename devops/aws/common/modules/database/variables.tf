@@ -5,8 +5,6 @@ variable "database_identifier" {
 variable "database_name" {
   description = "Database name"
   type        = string
-  sensitive   = true
-  default     = "postgres"
 }
 
 variable "database_username" {
@@ -24,7 +22,13 @@ variable "database_password" {
 variable "database_port" {
   description = "DB port"
   type        = number
-  default = 5432
+  default     = 5432
+}
+
+variable "multi_az" {
+  description = "Defines if DB should be multi az"
+  type        = bool
+  default     = false
 }
 
 variable "subnet_ids" {
@@ -75,7 +79,7 @@ variable "database_engine_major_engine_version" {
 variable "database_instance_class" {
   description = "DB instance class"
   type        = string
-  default     = "db.t3.small"
+  default     = "db.t3.micro"
 }
 
 variable "database_maintenance_window" {

@@ -1,6 +1,6 @@
 [
   {
-    "name": "${service_name}",
+    "name": "${task_name}",
     "image": "${image}",
     "cpu": ${fargate_cpu},
     "memory": ${fargate_memory},
@@ -19,7 +19,7 @@
         "hostPort": ${host_port}
       }
     ],
-    "environment": ${service_enviroment},
-    "secrets": ${service_secrets}
+    "environment": ${env_vars},
+    "secrets": ${secret_vars}
   }
 ]

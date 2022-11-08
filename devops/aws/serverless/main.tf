@@ -1,3 +1,5 @@
+// TODO: Rework this when https://github.com/terraform-aws-modules/terraform-aws-s3-bucket/pull/139 is merged
+
 ################################################################################
 ################################################################################
 ################################################################################
@@ -6,9 +8,12 @@
 ################################################################################
 ################################################################################
 provider "aws" {
-  shared_credentials_file = "$HOME/.aws/credentials"
-  profile                 = "default"
-  region                  = var.aws_region
+  shared_credentials_files = ["$HOME/.aws/credentials"]
+  profile                  = var.aws_profile
+  region                   = var.aws_region
+#    default_tags {
+#      tags = var.default_tags
+#    }
 }
 
 ################################################################################
@@ -20,16 +25,11 @@ provider "aws" {
 ################################################################################
 module "networking" {
   source               = "../common/modules/network"
-  create_vpc           = var.create_vpc
-  create_igw           = var.create_igw
-  single_nat_gateway   = var.single_nat_gateway
-  enable_nat_gateway   = var.enable_nat_gateway
   region               = var.aws_region
   vpc_name             = var.vpc_name
-  cidr_block           = var.cidr_block
-  availability_zones   = var.availability_zones
-  public_subnet_cidrs  = var.public_subnet_cidrs
-  private_subnet_cidrs = var.private_subnet_cidrs
+  vpc_cidr             = var.cidr_block
+  private_subnet_count = var.private_subnet_count
+  public_subnet_count  = var.public_subnet_count
 }
 
 ################################################################################
@@ -39,42 +39,63 @@ module "networking" {
 ################################################################################
 ################################################################################
 ################################################################################
+
 module "private_vpc_sg" {
-  source                   = "../common/modules/security"
-  create_vpc               = var.create_vpc
-  create_sg                = true
-  sg_name                  = "private-lambda-security-group"
-  description              = "Controls access to the private lambdas (not internet facing)"
-  rule_ingress_description = "allow inbound access only from resources in VPC"
-  rule_egress_description  = "allow all outbound"
-  vpc_id                   = module.networking.vpc_id
-  ingress_cidr_blocks      = [var.cidr_block]
-  ingress_from_port        = 0
-  ingress_to_port          = 0
-  ingress_protocol         = "-1"
-  egress_cidr_blocks       = ["0.0.0.0/0"]
-  egress_from_port         = 0
-  egress_to_port           = 0
-  egress_protocol          = "-1"
+  source            = "../common/modules/security"
+  sg_name           = "private-lambda-security-group"
+  description       = "Controls access to the private lambdas (not internet facing)"
+  vpc_id            = module.networking.vpc_id
+  egress_cidr_rules = {
+    1 = {
+      description      = "allow all outbound"
+      protocol         = "-1"
+      from_port        = 0
+      to_port          = 0
+      cidr_blocks      = ["0.0.0.0/0"]
+      ipv6_cidr_blocks = ["::/0"]
+    }
+  }
+  egress_source_sg_rules  = {}
+  ingress_source_sg_rules = {}
+  ingress_cidr_rules      = {
+    1 = {
+      description      = "allow inbound access only from resources in VPC"
+      protocol         = "-1"
+      from_port        = 0
+      to_port          = 0
+      cidr_blocks      = [module.networking.vpc_cidr_block]
+      ipv6_cidr_blocks = [module.networking.vpc_ipv6_cidr_block]
+    }
+  }
 }
 
 module "private_database_sg" {
-  source                   = "../common/modules/security"
-  create_vpc               = var.create_vpc
-  create_sg                = true
-  sg_name                  = "private-database-security-group"
-  description              = "Controls access to the private database (not internet facing)"
-  rule_ingress_description = "allow inbound access only from resources in VPC"
-  rule_egress_description  = "allow all outbound"
-  vpc_id                   = module.networking.vpc_id
-  ingress_cidr_blocks      = [var.cidr_block]
-  ingress_from_port        = 0
-  ingress_to_port          = 0
-  ingress_protocol         = "-1"
-  egress_cidr_blocks       = ["0.0.0.0/0"]
-  egress_from_port         = 0
-  egress_to_port           = 0
-  egress_protocol          = "-1"
+  source            = "../common/modules/security"
+  sg_name           = "private-database-security-group"
+  description       = "Controls access to the private database (not internet facing)"
+  vpc_id            = module.networking.vpc_id
+  egress_cidr_rules = {
+    1 = {
+      description      = "allow all outbound"
+      protocol         = "-1"
+      from_port        = 0
+      to_port          = 0
+      cidr_blocks      = ["0.0.0.0/0"]
+      ipv6_cidr_blocks = ["::/0"]
+    }
+  }
+  egress_source_sg_rules  = {}
+  ingress_source_sg_rules = {}
+  ingress_cidr_rules      = {
+    1 = {
+      description      = "allow inbound access only from resources in VPC"
+      protocol         = "tcp"
+      from_port        = 0
+      to_port          = module.users_database.db_instance_port
+      cidr_blocks      = [module.networking.vpc_cidr_block]
+      ipv6_cidr_blocks = [module.networking.vpc_ipv6_cidr_block]
+    }
+  }
 }
 
 ################################################################################
@@ -86,17 +107,17 @@ module "private_database_sg" {
 ################################################################################
 module "users_profile_images_bucket" {
   source = "terraform-aws-modules/s3-bucket/aws"
-
-  bucket = "users-profile-images-tf"
-  acl    = "private"
+  version = "2.15.0"
+  bucket        = "users-profile-images-tf"
+  acl           = "private"
   force_destroy = true
 }
 
 module "users_thumbnails_images_bucket" {
   source = "terraform-aws-modules/s3-bucket/aws"
-
-  bucket = "users-thumbnails-images-tf"
-  acl    = "private"
+  version = "2.15.0"
+  bucket        = "users-thumbnails-images-tf"
+  acl           = "private"
   force_destroy = true
 }
 
@@ -121,14 +142,14 @@ resource "aws_sns_topic" "new_user_added_topic" {
 
 # Users Profile Image Queue
 resource "aws_sqs_queue" "users_profile_images_queue" {
-  name = "users-profile-images"
-  redrive_policy  = "{\"deadLetterTargetArn\":\"${aws_sqs_queue.users_profile_images_dlq.arn}\",\"maxReceiveCount\":5}"
+  name           = "users-profile-images"
+  redrive_policy = "{\"deadLetterTargetArn\":\"${aws_sqs_queue.users_profile_images_dlq.arn}\",\"maxReceiveCount\":5}"
 }
 
 resource "aws_sqs_queue_policy" "users_profile_images_queue_policy" {
-  queue_url = "${aws_sqs_queue.users_profile_images_queue.id}"
+  queue_url = aws_sqs_queue.users_profile_images_queue.id
   # SQS Policy to specify which service can send messages to this queue
-  policy = <<POLICY
+  policy    = <<POLICY
 {
   "Version": "2012-10-17",
   "Statement": [
@@ -153,14 +174,14 @@ resource "aws_sqs_queue" "users_profile_images_dlq" {
 
 # User Demo Posts Queue
 resource "aws_sqs_queue" "users_demo_post_queue" {
-  name = "users-demo-posts"
-  redrive_policy  = "{\"deadLetterTargetArn\":\"${aws_sqs_queue.users_demo_post_dlq.arn}\",\"maxReceiveCount\":5}"
+  name           = "users-demo-posts"
+  redrive_policy = "{\"deadLetterTargetArn\":\"${aws_sqs_queue.users_demo_post_dlq.arn}\",\"maxReceiveCount\":5}"
 }
 
 resource "aws_sqs_queue_policy" "users_demo_post_queue_policy" {
-  queue_url = "${aws_sqs_queue.users_demo_post_queue.id}"
+  queue_url = aws_sqs_queue.users_demo_post_queue.id
   # SQS Policy that is needed for our SQS to actually receive events from the SNS topic
-  policy = <<POLICY
+  policy    = <<POLICY
 {
   "Version": "2012-10-17",
   "Id": "sqspolicy",
@@ -195,9 +216,9 @@ resource "aws_sqs_queue" "users_demo_post_dlq" {
 ################################################################################
 # subscription, which will allow our SQS queue to receive notifications from the SNS topic we created above
 resource "aws_sns_topic_subscription" "users_demo_post_queue_target" {
-  topic_arn = "${aws_sns_topic.new_user_added_topic.arn}"
+  topic_arn = aws_sns_topic.new_user_added_topic.arn
   protocol  = "sqs"
-  endpoint  = "${aws_sqs_queue.users_demo_post_queue.arn}"
+  endpoint  = aws_sqs_queue.users_demo_post_queue.arn
 }
 
 ################################################################################
@@ -211,8 +232,8 @@ resource "aws_s3_bucket_notification" "users_profile_images_notification" {
   bucket = module.users_profile_images_bucket.s3_bucket_id
 
   queue {
-    queue_arn     = aws_sqs_queue.users_profile_images_queue.arn
-    events        = ["s3:ObjectCreated:*"]
+    queue_arn = aws_sqs_queue.users_profile_images_queue.arn
+    events    = ["s3:ObjectCreated:*"]
   }
 
   depends_on = [aws_sqs_queue.users_profile_images_queue]
@@ -227,23 +248,25 @@ resource "aws_s3_bucket_notification" "users_profile_images_notification" {
 ################################################################################
 # Users Database
 module "users_database" {
-  source                = "../common/modules/database"
-  database_identifier   = "users-database"
-  database_username     = var.users_database_username
-  database_password     = var.users_database_password
-  subnet_ids            = module.networking.private_subnet_ids
-  security_group_ids    = [module.private_database_sg.security_group_id]
-  monitoring_role_name  = "UsersDatabaseMonitoringRole"
+  source               = "../common/modules/database"
+  database_identifier  = "users-database"
+  database_username    = var.users_database_username
+  database_password    = var.users_database_password
+  subnet_ids           = module.networking.private_subnet_ids
+  security_group_ids   = [module.private_database_sg.security_group_id]
+  monitoring_role_name = "UsersDatabaseMonitoringRole"
+  database_name        = ""
 }
 # Posts Database
 module "posts_database" {
-  source                = "../common/modules/database"
-  database_identifier   = "posts-database"
-  database_username     = var.posts_database_username
-  database_password     = var.posts_database_password
-  subnet_ids            = module.networking.private_subnet_ids
-  security_group_ids    = [module.private_database_sg.security_group_id]
-  monitoring_role_name  = "PostsDatabaseMonitoringRole"
+  source               = "../common/modules/database"
+  database_identifier  = "posts-database"
+  database_username    = var.posts_database_username
+  database_password    = var.posts_database_password
+  subnet_ids           = module.networking.private_subnet_ids
+  security_group_ids   = [module.private_database_sg.security_group_id]
+  monitoring_role_name = "PostsDatabaseMonitoringRole"
+  database_name        = ""
 }
 
 ################################################################################
@@ -255,7 +278,7 @@ module "posts_database" {
 ################################################################################
 module "lambda_layer_logging" {
   source = "terraform-aws-modules/lambda/aws"
-
+  version = "2.35.0"
   create_layer = true
 
   layer_name          = "lambda-layer-logging"
@@ -270,6 +293,7 @@ module "lambda_layer_logging" {
 
 module "lambda_layer_users_database" {
   source = "terraform-aws-modules/lambda/aws"
+  version = "2.35.0"
 
   create_layer = true
 
@@ -285,6 +309,7 @@ module "lambda_layer_users_database" {
 
 module "lambda_layer_posts_database" {
   source = "terraform-aws-modules/lambda/aws"
+  version = "2.35.0"
 
   create_layer = true
 
@@ -310,6 +335,7 @@ module "lambda_layer_posts_database" {
 ################################################################################
 module "jwt_auth" {
   source = "terraform-aws-modules/lambda/aws"
+  version = "2.35.0"
 
   function_name = "jwt_auth"
   description   = "Verifies JWT"
@@ -324,7 +350,7 @@ module "jwt_auth" {
 
   vpc_subnet_ids         = module.networking.private_subnet_ids
   vpc_security_group_ids = [module.private_vpc_sg.security_group_id]
-  attach_network_policy = true
+  attach_network_policy  = true
 
   allowed_triggers = {
     AllowExecutionFromAPIGateway = {
@@ -334,7 +360,7 @@ module "jwt_auth" {
   }
 
   attach_dead_letter_policy = false
-  
+
   layers = [
     module.lambda_layer_logging.lambda_layer_arn
   ]
@@ -346,6 +372,7 @@ module "jwt_auth" {
 
 module "basic_auth" {
   source = "terraform-aws-modules/lambda/aws"
+  version = "2.35.0"
 
   function_name = "basic_auth"
   description   = "Verifies basic authentication"
@@ -360,7 +387,7 @@ module "basic_auth" {
 
   vpc_subnet_ids         = module.networking.private_subnet_ids
   vpc_security_group_ids = [module.private_vpc_sg.security_group_id]
-  attach_network_policy = true
+  attach_network_policy  = true
 
   allowed_triggers = {
     AllowExecutionFromAPIGateway = {
@@ -370,7 +397,7 @@ module "basic_auth" {
   }
 
   attach_dead_letter_policy = false
-  
+
   layers = [
     module.lambda_layer_logging.lambda_layer_arn
   ]
@@ -383,6 +410,7 @@ module "basic_auth" {
 
 module "login" {
   source = "terraform-aws-modules/lambda/aws"
+  version = "2.35.0"
 
   function_name = "login"
   description   = "Handles token generation"
@@ -398,7 +426,7 @@ module "login" {
 
   vpc_subnet_ids         = module.networking.private_subnet_ids
   vpc_security_group_ids = [module.private_vpc_sg.security_group_id]
-  attach_network_policy = true
+  attach_network_policy  = true
 
   allowed_triggers = {
     AllowExecutionFromAPIGateway = {
@@ -408,18 +436,18 @@ module "login" {
   }
 
   attach_dead_letter_policy = false
-  
+
   layers = [
     module.lambda_layer_logging.lambda_layer_arn,
     module.lambda_layer_users_database.lambda_layer_arn
   ]
 
   environment_variables = {
-    DB_HOST = module.users_database.db_instance_address,
-    DB_PORT = module.users_database.db_instance_port,
-    DB_NAME = module.users_database.db_instance_name,
-    DB_USER = module.users_database.db_instance_username,
-    DB_PASS = module.users_database.db_master_password,
+    DB_HOST    = module.users_database.db_instance_address,
+    DB_PORT    = module.users_database.db_instance_port,
+    DB_NAME    = var.users_database_name,
+    DB_USER    = module.users_database.db_instance_username,
+    DB_PASS    = module.users_database.db_instance_password,
     JWT_SECRET = var.jwt_secret
   }
 }
@@ -428,6 +456,7 @@ module "login" {
 ################################################################################
 module "run_db_migrations" {
   source = "terraform-aws-modules/lambda/aws"
+  version = "2.35.0"
 
   function_name = "run-db-migrations"
   description   = "Run database migrations"
@@ -443,7 +472,7 @@ module "run_db_migrations" {
 
   vpc_subnet_ids         = module.networking.private_subnet_ids
   vpc_security_group_ids = [module.private_vpc_sg.security_group_id]
-  attach_network_policy = true
+  attach_network_policy  = true
 
   allowed_triggers = {
     AllowExecutionFromAPIGateway = {
@@ -465,14 +494,14 @@ module "run_db_migrations" {
   environment_variables = {
     USERS_DB_HOST = module.users_database.db_instance_address,
     USERS_DB_PORT = module.users_database.db_instance_port,
-    USERS_DB_NAME = module.users_database.db_instance_name,
+    USERS_DB_NAME = var.users_database_name,
     USERS_DB_USER = module.users_database.db_instance_username,
-    USERS_DB_PASS = module.users_database.db_master_password,
+    USERS_DB_PASS = module.users_database.db_instance_password,
     POSTS_DB_HOST = module.posts_database.db_instance_address,
     POSTS_DB_PORT = module.posts_database.db_instance_port,
-    POSTS_DB_NAME = module.posts_database.db_instance_name,
+    POSTS_DB_NAME = var.posts_database_name,
     POSTS_DB_USER = module.posts_database.db_instance_username,
-    POSTS_DB_PASS = module.posts_database.db_master_password
+    POSTS_DB_PASS = module.posts_database.db_instance_password
   }
 }
 
@@ -481,6 +510,7 @@ module "run_db_migrations" {
 ################################################################################
 module "create_admin_lambda" {
   source = "terraform-aws-modules/lambda/aws"
+  version = "2.35.0"
 
   function_name = "create-admin"
   description   = "Create new admin"
@@ -496,7 +526,7 @@ module "create_admin_lambda" {
 
   vpc_subnet_ids         = module.networking.private_subnet_ids
   vpc_security_group_ids = [module.private_vpc_sg.security_group_id]
-  attach_network_policy = true
+  attach_network_policy  = true
 
   allowed_triggers = {
     AllowExecutionFromAPIGateway = {
@@ -517,9 +547,9 @@ module "create_admin_lambda" {
   environment_variables = {
     DB_HOST = module.users_database.db_instance_address,
     DB_PORT = module.users_database.db_instance_port,
-    DB_NAME = module.users_database.db_instance_name,
+    DB_NAME = var.users_database_name,
     DB_USER = module.users_database.db_instance_username,
-    DB_PASS = module.users_database.db_master_password,
+    DB_PASS = module.users_database.db_instance_password,
   }
 }
 
@@ -528,6 +558,7 @@ module "create_admin_lambda" {
 ################################################################################
 module "create_user_lambda" {
   source = "terraform-aws-modules/lambda/aws"
+  version = "2.35.0"
 
   function_name = "create-user"
   description   = "Create new user"
@@ -543,7 +574,7 @@ module "create_user_lambda" {
 
   vpc_subnet_ids         = module.networking.private_subnet_ids
   vpc_security_group_ids = [module.private_vpc_sg.security_group_id]
-  attach_network_policy = true
+  attach_network_policy  = true
 
   allowed_triggers = {
     AllowExecutionFromAPIGateway = {
@@ -553,8 +584,8 @@ module "create_user_lambda" {
   }
 
   attach_dead_letter_policy = false
-  attach_policy_statements = true
-  policy_statements = {
+  attach_policy_statements  = true
+  policy_statements         = {
     sqs = {
       effect    = "Allow",
       actions   = ["sqs:*"],
@@ -580,20 +611,21 @@ module "create_user_lambda" {
   depends_on = [module.users_database]
 
   environment_variables = {
-    DB_HOST = module.users_database.db_instance_address,
-    DB_PORT = module.users_database.db_instance_port,
-    DB_NAME = module.users_database.db_instance_name,
-    DB_USER = module.users_database.db_instance_username,
-    DB_PASS = module.users_database.db_master_password,
-    AWS_SNS_REGION = var.aws_region
-    AWS_SNS_TOPIC_ARN = "${aws_sns_topic.new_user_added_topic.arn}"
-    AWS_SQS_REGION = var.aws_region
+    DB_HOST           = module.users_database.db_instance_address,
+    DB_PORT           = module.users_database.db_instance_port,
+    DB_NAME           = var.users_database_name,
+    DB_USER           = module.users_database.db_instance_username,
+    DB_PASS           = module.users_database.db_instance_password,
+    AWS_SNS_REGION    = var.aws_region
+    AWS_SNS_TOPIC_ARN = aws_sns_topic.new_user_added_topic.arn
+    AWS_SQS_REGION    = var.aws_region
     AWS_SQS_QUEUE_URL = aws_sqs_queue.users_demo_post_queue.url
   }
 }
 
 module "get_user_lambda" {
   source = "terraform-aws-modules/lambda/aws"
+  version = "2.35.0"
 
   function_name = "get-user"
   description   = "Get specific user"
@@ -609,7 +641,7 @@ module "get_user_lambda" {
 
   vpc_subnet_ids         = module.networking.private_subnet_ids
   vpc_security_group_ids = [module.private_vpc_sg.security_group_id]
-  attach_network_policy = true
+  attach_network_policy  = true
 
   allowed_triggers = {
     AllowExecutionFromAPIGateway = {
@@ -628,14 +660,15 @@ module "get_user_lambda" {
   environment_variables = {
     DB_HOST = module.users_database.db_instance_address,
     DB_PORT = module.users_database.db_instance_port,
-    DB_NAME = module.users_database.db_instance_name,
+    DB_NAME = var.users_database_name,
     DB_USER = module.users_database.db_instance_username,
-    DB_PASS = module.users_database.db_master_password,
+    DB_PASS = module.users_database.db_instance_password,
   }
 }
 
 module "list_users_lambda" {
   source = "terraform-aws-modules/lambda/aws"
+  version = "2.35.0"
 
   function_name = "list-users"
   description   = "List users"
@@ -651,7 +684,7 @@ module "list_users_lambda" {
 
   vpc_subnet_ids         = module.networking.private_subnet_ids
   vpc_security_group_ids = [module.private_vpc_sg.security_group_id]
-  attach_network_policy = true
+  attach_network_policy  = true
 
   allowed_triggers = {
     AllowExecutionFromAPIGateway = {
@@ -670,14 +703,15 @@ module "list_users_lambda" {
   environment_variables = {
     DB_HOST = module.users_database.db_instance_address,
     DB_PORT = module.users_database.db_instance_port,
-    DB_NAME = module.users_database.db_instance_name,
+    DB_NAME = var.users_database_name,
     DB_USER = module.users_database.db_instance_username,
-    DB_PASS = module.users_database.db_master_password,
+    DB_PASS = module.users_database.db_instance_password,
   }
 }
 
 module "update_user_lambda" {
   source = "terraform-aws-modules/lambda/aws"
+  version = "2.35.0"
 
   function_name = "update-user"
   description   = "Update specific user"
@@ -693,7 +727,7 @@ module "update_user_lambda" {
 
   vpc_subnet_ids         = module.networking.private_subnet_ids
   vpc_security_group_ids = [module.private_vpc_sg.security_group_id]
-  attach_network_policy = true
+  attach_network_policy  = true
 
   allowed_triggers = {
     AllowExecutionFromAPIGateway = {
@@ -705,7 +739,7 @@ module "update_user_lambda" {
   attach_dead_letter_policy = false
   attach_policies           = true
   number_of_policies        = 1
-  policies = [
+  policies                  = [
     "arn:aws:iam::aws:policy/AmazonS3FullAccess"
   ]
 
@@ -715,11 +749,11 @@ module "update_user_lambda" {
   ]
 
   environment_variables = {
-    DB_HOST = module.users_database.db_instance_address,
-    DB_PORT = module.users_database.db_instance_port,
-    DB_NAME = module.users_database.db_instance_name,
-    DB_USER = module.users_database.db_instance_username,
-    DB_PASS = module.users_database.db_master_password,
+    DB_HOST       = module.users_database.db_instance_address,
+    DB_PORT       = module.users_database.db_instance_port,
+    DB_NAME       = var.users_database_name,
+    DB_USER       = module.users_database.db_instance_username,
+    DB_PASS       = module.users_database.db_instance_password,
     AWS_S3_REGION = var.aws_region
     AWS_S3_BUCKET = module.users_profile_images_bucket.s3_bucket_id
   }
@@ -727,6 +761,7 @@ module "update_user_lambda" {
 
 module "modify_user_profile_image_lambda" {
   source = "terraform-aws-modules/lambda/aws"
+  version = "2.35.0"
 
   function_name = "modify-user-profile-image"
   description   = "Modify specific user profile image"
@@ -743,12 +778,12 @@ module "modify_user_profile_image_lambda" {
 
   vpc_subnet_ids         = module.networking.private_subnet_ids
   vpc_security_group_ids = [module.private_vpc_sg.security_group_id]
-  attach_network_policy = true
+  attach_network_policy  = true
 
   attach_dead_letter_policy = false
   attach_policies           = true
   number_of_policies        = 2
-  policies = [
+  policies                  = [
     "arn:aws:iam::aws:policy/AmazonS3FullAccess",
     "arn:aws:iam::aws:policy/service-role/AWSLambdaSQSQueueExecutionRole",
   ]
@@ -772,14 +807,14 @@ module "modify_user_profile_image_lambda" {
   ]
 
   environment_variables = {
-    DB_HOST = module.users_database.db_instance_address,
-    DB_PORT = module.users_database.db_instance_port,
-    DB_NAME = module.users_database.db_instance_name,
-    DB_USER = module.users_database.db_instance_username,
-    DB_PASS = module.users_database.db_master_password,
-    AWS_S3_REGION = var.aws_region
-    AWS_S3_BUCKET = module.users_thumbnails_images_bucket.s3_bucket_id
-    AWS_SQS_REGION = var.aws_region
+    DB_HOST           = module.users_database.db_instance_address,
+    DB_PORT           = module.users_database.db_instance_port,
+    DB_NAME           = var.users_database_name,
+    DB_USER           = module.users_database.db_instance_username,
+    DB_PASS           = module.users_database.db_instance_password,
+    AWS_S3_REGION     = var.aws_region
+    AWS_S3_BUCKET     = module.users_thumbnails_images_bucket.s3_bucket_id
+    AWS_SQS_REGION    = var.aws_region
     AWS_SQS_QUEUE_URL = aws_sqs_queue.users_profile_images_queue.url
   }
 }
@@ -789,6 +824,7 @@ module "modify_user_profile_image_lambda" {
 ################################################################################
 module "create_post_lambda" {
   source = "terraform-aws-modules/lambda/aws"
+  version = "2.35.0"
 
   function_name = "create-post"
   description   = "Create new post for user"
@@ -804,11 +840,11 @@ module "create_post_lambda" {
 
   vpc_subnet_ids         = module.networking.private_subnet_ids
   vpc_security_group_ids = [module.private_vpc_sg.security_group_id]
-  attach_network_policy = true
+  attach_network_policy  = true
 
-  attach_policies           = true
-  number_of_policies        = 1
-  policies = [
+  attach_policies    = true
+  number_of_policies = 1
+  policies           = [
     "arn:aws:iam::aws:policy/service-role/AWSLambdaSQSQueueExecutionRole",
   ]
 
@@ -841,14 +877,15 @@ module "create_post_lambda" {
   environment_variables = {
     DB_HOST = module.posts_database.db_instance_address,
     DB_PORT = module.posts_database.db_instance_port,
-    DB_NAME = module.posts_database.db_instance_name,
+    DB_NAME = var.posts_database_name,
     DB_USER = module.posts_database.db_instance_username,
-    DB_PASS = module.posts_database.db_master_password,
+    DB_PASS = module.posts_database.db_instance_password,
   }
 }
 
 module "list_user_posts_lambda" {
   source = "terraform-aws-modules/lambda/aws"
+  version = "2.35.0"
 
   function_name = "list-users-post"
   description   = "List user posts"
@@ -864,7 +901,7 @@ module "list_user_posts_lambda" {
 
   vpc_subnet_ids         = module.networking.private_subnet_ids
   vpc_security_group_ids = [module.private_vpc_sg.security_group_id]
-  attach_network_policy = true
+  attach_network_policy  = true
 
   allowed_triggers = {
     AllowExecutionFromAPIGateway = {
@@ -885,9 +922,9 @@ module "list_user_posts_lambda" {
   environment_variables = {
     DB_HOST = module.posts_database.db_instance_address,
     DB_PORT = module.posts_database.db_instance_port,
-    DB_NAME = module.posts_database.db_instance_name,
+    DB_NAME = var.posts_database_name,
     DB_USER = module.posts_database.db_instance_username,
-    DB_PASS = module.posts_database.db_master_password,
+    DB_PASS = module.posts_database.db_instance_password,
   }
 }
 
@@ -900,20 +937,23 @@ module "list_user_posts_lambda" {
 ################################################################################
 module "api_gateway" {
   source = "terraform-aws-modules/apigateway-v2/aws"
+  version = "1.5.1"
 
   name          = "main-GW-${var.environment}"
   description   = "HTTP API Gateway"
   protocol_type = "HTTP"
 
   cors_configuration = {
-    allow_headers = ["content-type", "x-amz-date", "authorization", "x-api-key", "x-amz-security-token", "x-amz-user-agent"]
+    allow_headers = [
+      "content-type", "x-amz-date", "authorization", "x-api-key", "x-amz-security-token", "x-amz-user-agent"
+    ]
     allow_methods = ["*"]
     allow_origins = ["*"]
   }
 
   create_api_domain_name = false
   # Routes and integrations
-  integrations = {
+  integrations           = {
     # Auth
     "POST /login" = {
       lambda_arn             = module.login.lambda_function_invoke_arn
@@ -1020,14 +1060,14 @@ EOF
 }
 
 resource "aws_apigatewayv2_authorizer" "jwt_auth" {
-  api_id           = module.api_gateway.apigatewayv2_api_id
-  authorizer_type  = "REQUEST"
-  identity_sources = ["$request.header.Authorization"]
-  name             = "LambdaAuthorizer"
-  authorizer_uri   = module.jwt_auth.lambda_function_invoke_arn
+  api_id                            = module.api_gateway.apigatewayv2_api_id
+  authorizer_type                   = "REQUEST"
+  identity_sources                  = ["$request.header.Authorization"]
+  name                              = "LambdaAuthorizer"
+  authorizer_uri                    = module.jwt_auth.lambda_function_invoke_arn
   authorizer_payload_format_version = "2.0"
-  enable_simple_responses = true
-  authorizer_credentials_arn = aws_iam_role.invocation_role.arn
+  enable_simple_responses           = true
+  authorizer_credentials_arn        = aws_iam_role.invocation_role.arn
 }
 
 resource "aws_iam_role_policy" "basic_auth_invocation_policy" {
@@ -1049,12 +1089,12 @@ EOF
 }
 
 resource "aws_apigatewayv2_authorizer" "basic_auth" {
-  api_id           = module.api_gateway.apigatewayv2_api_id
-  authorizer_type  = "REQUEST"
-  identity_sources = ["$request.header.Authorization"]
-  name             = "LambdaBasicAuthorizer"
-  authorizer_uri   = module.basic_auth.lambda_function_invoke_arn
+  api_id                            = module.api_gateway.apigatewayv2_api_id
+  authorizer_type                   = "REQUEST"
+  identity_sources                  = ["$request.header.Authorization"]
+  name                              = "LambdaBasicAuthorizer"
+  authorizer_uri                    = module.basic_auth.lambda_function_invoke_arn
   authorizer_payload_format_version = "2.0"
-  enable_simple_responses = true
-  authorizer_credentials_arn = aws_iam_role.invocation_role.arn
+  enable_simple_responses           = true
+  authorizer_credentials_arn        = aws_iam_role.invocation_role.arn
 }

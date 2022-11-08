@@ -1,9 +1,3 @@
-variable "create_alb" {
-  description = "Controls if the Load Balancer should be created"
-  type        = bool
-  default     = true
-}
-
 variable "vpc_id" {
   description = "The VPC id"
 }
@@ -33,11 +27,6 @@ variable "security_groups" {
   description = "The security groups to attach to the load balancer. e.g. [\"sg-edcd9784\",\"sg-edcd9785\"]"
   type        = list(string)
   default     = []
-}
-
-variable "environment" {
-  description = "Indicate the environment"
-  default     = "dev"
 }
 
 variable "http_tcp_listeners" {

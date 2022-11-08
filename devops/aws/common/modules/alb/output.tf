@@ -1,11 +1,11 @@
 output "alb_id" {
   description = "The ID of the load balancer we created."
-  value       = concat(aws_alb.this.*.id, [""])[0]
+  value       = aws_alb.this.id
 }
 
 output "alb_arn" {
   description = "The ARN of the load balancer we created."
-  value       = concat(aws_alb.this.*.arn, [""])[0]
+  value       = aws_alb.this.arn
 }
 
 output "alb_listener" {

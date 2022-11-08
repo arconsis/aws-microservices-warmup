@@ -1,3 +1,9 @@
+terraform {
+  # Optional attributes and the defaults function are
+  # both experimental, so we must opt in to the experiment.
+  experiments = [module_variable_optional_attrs]
+}
+
 # region
 variable "aws_region" {
   description = "The region to use for this module."
@@ -21,7 +27,7 @@ variable "cluster_name" {
   type        = string
 }
 
-variable "has_discovery" {
+variable "enable_discovery" {
   description = "Flag to switch on service discovery. If true, a valid DNS namespace must be provided"
   type        = bool
   default     = true
@@ -70,60 +76,38 @@ variable "logs_retention_in_days" {
   description = "Defines service logs retention period"
 }
 
-variable "service_name" {
-  description = "The task name which gives the name to the ECS task, container and service discovery name"
-  type        = string
+variable "task_definition" {
+  description = "ECS task definition"
+  type        = object({
+    name              = string
+    image             = string
+    aws_logs_group    = string
+    host_port         = number
+    container_port    = number
+    container_name    = string
+    family            = string
+    env_vars          = list(any)
+    secret_vars       = list(any)
+    health_check_path = string
+    network_mode      = string
+  })
 }
 
-variable "service_image" {
-  description = "The Docker image to run with the task"
-  type        = string
-}
-
-variable "service_aws_logs_group" {
-  description = "Defines logs group"
-}
-
-variable "service_port" {
-  description = "Port exposed by the docker image"
-}
-
-variable "service_desired_count" {
-  description = "Number of books docker containers to run"
-}
-
-variable "service_max_count" {
-  description = "Max number of books docker containers to run"
-}
-
-variable "service_task_family" {
-  description = "Defines logs group"
-}
-
-variable "service_enviroment_variables" {
-  description = "Defines service enviroment variables"
-}
-
-variable "service_secrets_variables" {
-  description = "Defines service secret variables"
-  default     = []
-}
-
-variable "service_health_check_path" {
-  description = "Path for health check"
-  type        = string
-}
-
-variable "network_mode" {
-  description = "Defines ecs task network mode"
-}
-
-variable "launch_type" {
-  description = "Defines ecs task network mode"
+variable "service" {
+  description = "ECS service"
+  type        = object({
+    name          = string
+    desired_count = number
+    max_count     = number
+  })
 }
 
 variable "service_security_groups_ids" {
   description = "IDs of SG on a ecs task network"
+}
+
+variable "launch_type" {
+  description = "Defines ecs launch type"
 }
 
 variable "subnet_ids" {
@@ -143,52 +127,28 @@ variable "iam_role_policy_ecs_task_execution_role" {
   description = "Policy of the IAM role that allows Amazon ECS to make calls to your load balancer on your behalf."
 }
 
-variable "alb_listener" {
-  description = "Defines ALB listener where service is registered"
-}
-
-variable "has_alb" {
+variable "enable_alb" {
   description = "Whether the service should be registered to an application load balancer"
   type        = bool
 }
 
-variable "alb_listener_tg" {
-  description = "Name of ALB listener target group"
-  type        = string
+variable "alb_listener" {
+  description = "Defines ALB listener where the service is registered"
 }
 
-variable "alb_listener_port" {
-  description = "Port of ALB listener target group"
-  type        = string
-}
-
-variable "alb_listener_protocol" {
-  description = "Protocol of ALB listener target group"
-  type        = string
-}
-
-variable "alb_listener_target_type" {
-  description = "Protocol of ALB listener target group"
-  type        = string
-}
-
-variable "alb_listener_arn" {
-  description = "ARN of ALB listener"
-  type        = string
-}
-
-variable "alb_listener_rule_priority" {
-  description = "Priority number of ALB listener rule"
-}
-
-variable "alb_listener_rule_type" {
-  description = "Type of ALB listener rule"
-  type        = string
-}
-
-variable "alb_service_tg_paths" {
-  description = "Paths which are used from ALB listener rule to route the request"
-  type        = list(string)
+variable "alb" {
+  type = object({
+    listener = object({
+      tg            = string
+      port          = number
+      protocol      = string
+      target_type   = string
+      arn           = string
+      rule_priority = string
+      rule_type     = string
+      tg_paths      = list(string)
+    })
+  })
 }
 
 variable "enable_autoscaling" {
@@ -197,20 +157,17 @@ variable "enable_autoscaling" {
 }
 
 variable "autoscaling_settings" {
-  type = map(any)
-  # default = {
-  #   max_capacity       = 1
-  #   min_capacity       = 1
-  #   target_cpu_value   = 60
-  #   scale_in_cooldown  = 300
-  #   scale_out_cooldown = 300
-  # }
-  description = "Settings of Auto Scaling."
-}
-
-variable "autoscaling_name" {
-  description = "Name of autoscaling group."
-  type        = string
+  type = object({
+    autoscaling_name    = string
+    max_capacity        = number
+    min_capacity        = number
+    target_cpu_value    = optional(number)
+    target_memory_value = optional(number)
+    scale_in_cooldown   = number
+    scale_out_cooldown  = number
+  })
+  default     = null
+  description = "Settings of based Auto Scaling."
 }
 
 variable "has_ordered_placement" {

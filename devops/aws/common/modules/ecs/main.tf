@@ -1,16 +1,16 @@
 # Set up CloudWatch group and log stream and retain logs for 30 days
 resource "aws_cloudwatch_log_group" "this" {
-  name              = var.service_aws_logs_group
+  name              = var.task_definition.aws_logs_group
   retention_in_days = var.logs_retention_in_days
 
   tags = {
-    Name = "${var.service_name}_log_group"
+    Name = "${var.task_definition.name}_lg"
   }
 }
 
 resource "aws_service_discovery_service" "this" {
-  count = var.has_discovery == false ? 0 : 1
-  name  = var.service_name
+  count = var.enable_discovery == false ? 0 : 1
+  name  = var.service.name
 
   dns_config {
     namespace_id = var.dns_namespace_id
@@ -25,26 +25,26 @@ resource "aws_service_discovery_service" "this" {
 }
 
 data "template_file" "this" {
-  template = file("../common/templates/ecs/service.json.tpl")
-  vars = {
-    service_name       = var.service_name
-    image              = var.service_image
-    container_port     = var.service_port
-    host_port          = var.service_port
-    fargate_cpu        = var.fargate_cpu
-    fargate_memory     = var.fargate_memory
-    aws_region         = var.aws_region
-    aws_logs_group     = var.service_aws_logs_group
-    network_mode       = var.network_mode
-    service_enviroment = jsonencode(var.service_enviroment_variables)
-    service_secrets    = jsonencode(var.service_secrets_variables)
+  template = file("../common/templates/ecs/task.json.tpl")
+  vars     = {
+    task_name      = var.task_definition.name
+    image          = var.task_definition.image
+    container_port = var.task_definition.container_port
+    host_port      = var.task_definition.host_port
+    fargate_cpu    = var.fargate_cpu
+    fargate_memory = var.fargate_memory
+    aws_region     = var.aws_region
+    aws_logs_group = var.task_definition.aws_logs_group
+    network_mode   = var.task_definition.network_mode
+    env_vars       = jsonencode(var.task_definition.env_vars)
+    secret_vars    = jsonencode(var.task_definition.secret_vars)
   }
 }
 
 resource "aws_ecs_task_definition" "this" {
-  family                   = var.service_task_family
+  family                   = var.task_definition.family
   execution_role_arn       = var.iam_role_ecs_task_execution_role.arn
-  network_mode             = var.network_mode
+  network_mode             = var.task_definition.network_mode
   requires_compatibilities = var.task_compatibilities
   cpu                      = var.fargate_cpu
   memory                   = var.fargate_memory
@@ -52,13 +52,13 @@ resource "aws_ecs_task_definition" "this" {
 }
 
 resource "aws_ecs_service" "this" {
-  name            = var.service_name
+  name            = var.service.name
   cluster         = var.cluster_id
   task_definition = aws_ecs_task_definition.this.arn
-  desired_count   = var.service_desired_count
+  desired_count   = var.service.desired_count
   launch_type     = var.launch_type
 
-  health_check_grace_period_seconds = var.has_alb == true ? var.health_check_grace_period_seconds : null
+  health_check_grace_period_seconds = var.enable_alb == true ? var.health_check_grace_period_seconds : null
 
   network_configuration {
     security_groups  = var.service_security_groups_ids
@@ -67,19 +67,19 @@ resource "aws_ecs_service" "this" {
   }
 
   dynamic "load_balancer" {
-    for_each = var.has_alb == false ? [] : [1]
+    for_each = var.enable_alb == false ? [] : [1]
     content {
       target_group_arn = aws_alb_target_group.this[0].arn
-      container_name   = var.service_name
-      container_port   = var.service_port
+      container_name   = var.task_definition.container_name
+      container_port   = var.task_definition.container_port
     }
   }
 
   dynamic "service_registries" {
-    for_each = var.has_discovery == false ? [] : [1]
+    for_each = var.enable_discovery == false ? [] : [1]
     content {
       registry_arn   = aws_service_discovery_service.this[0].arn
-      container_name = var.service_name
+      container_name = var.task_definition.container_name
     }
   }
 
@@ -95,13 +95,13 @@ resource "aws_ecs_service" "this" {
 }
 
 resource "aws_alb_target_group" "this" {
-  count = var.has_alb == true ? 1 : 0
+  count = var.enable_alb == true ? 1 : 0
 
-  name        = var.alb_listener_tg
-  port        = var.alb_listener_port
-  protocol    = var.alb_listener_protocol
+  name        = var.alb.listener.tg
+  port        = var.alb.listener.port
+  protocol    = var.alb.listener.protocol
   vpc_id      = var.vpc_id
-  target_type = var.alb_listener_target_type
+  target_type = var.alb.listener.target_type
 
   health_check {
     healthy_threshold   = "3"
@@ -109,7 +109,7 @@ resource "aws_alb_target_group" "this" {
     protocol            = "HTTP"
     matcher             = "200"
     timeout             = "3"
-    path                = var.service_health_check_path
+    path                = var.task_definition.health_check_path
     unhealthy_threshold = "2"
   }
 
@@ -117,70 +117,67 @@ resource "aws_alb_target_group" "this" {
 }
 
 resource "aws_alb_listener_rule" "this" {
-  count = var.has_alb == true ? 1 : 0
+  count = var.enable_alb == true ? 1 : 0
 
-  listener_arn = var.alb_listener_arn
-  priority     = var.alb_listener_rule_priority
+  listener_arn = var.alb.listener.arn
+  priority     = var.alb.listener.rule_priority
 
   action {
-    type             = var.alb_listener_rule_type # Redirect all traffic from the ALB to the target group
+    type             = var.alb.listener.rule_type # Redirect all traffic from the ALB to the target group
     target_group_arn = aws_alb_target_group.this[0].arn
   }
 
   condition {
     path_pattern {
-      values = var.alb_service_tg_paths
+      values = var.alb.listener.tg_paths
     }
   }
 }
 
-## ECS Service Autoscaling
 resource "aws_appautoscaling_target" "this" {
-  count = var.enable_autoscaling == true ? 1 : 0
-
-  max_capacity       = lookup(var.autoscaling_settings, "max_capacity", 1)
-  min_capacity       = lookup(var.autoscaling_settings, "min_capacity", 1)
+  count              = var.autoscaling_settings != null ? 1 : 0
+  max_capacity       = var.autoscaling_settings.max_capacity
+  min_capacity       = var.autoscaling_settings.min_capacity
   resource_id        = "service/${var.cluster_name}/${aws_ecs_service.this.name}"
   scalable_dimension = "ecs:service:DesiredCount"
   service_namespace  = "ecs"
 }
 
-
 resource "aws_appautoscaling_policy" "ecs_policy_cpu" {
-  count = var.enable_autoscaling == true && lookup(var.autoscaling_settings, "target_cpu_value", null) != null ? 1 : 0
+  count = try(var.autoscaling_settings.target_cpu_value, null) != null ? 1 : 0
 
-  name               = "${var.autoscaling_name}-scale-cpu"
+  name               = "${var.autoscaling_settings.autoscaling_name}-scale-cpu"
   policy_type        = "TargetTrackingScaling"
-  resource_id        = aws_appautoscaling_target.this.0.resource_id
-  scalable_dimension = aws_appautoscaling_target.this.0.scalable_dimension
-  service_namespace  = aws_appautoscaling_target.this.0.service_namespace
+  resource_id        = aws_appautoscaling_target.this[0].resource_id
+  scalable_dimension = aws_appautoscaling_target.this[0].scalable_dimension
+  service_namespace  = aws_appautoscaling_target.this[0].service_namespace
 
   target_tracking_scaling_policy_configuration {
     predefined_metric_specification {
       predefined_metric_type = "ECSServiceAverageCPUUtilization"
     }
 
-    target_value       = lookup(var.autoscaling_settings, "target_cpu_value", 0)
+    target_value       = var.autoscaling_settings.target_cpu_value
     scale_in_cooldown  = var.autoscaling_settings.scale_in_cooldown
     scale_out_cooldown = var.autoscaling_settings.scale_out_cooldown
   }
 }
 
 resource "aws_appautoscaling_policy" "ecs_policy_memory" {
-  count = var.enable_autoscaling == true && lookup(var.autoscaling_settings, "target_memory_value", null) != null ? 1 : 0
+  count = try(var.autoscaling_settings.target_memory_value, null) != null ? 1 : 0
 
-  name               = "${var.autoscaling_name}-scale-memory"
+  name               = "${var.autoscaling_settings.autoscaling_name}-scale-memory"
   policy_type        = "TargetTrackingScaling"
-  resource_id        = aws_appautoscaling_target.this.0.resource_id
-  scalable_dimension = aws_appautoscaling_target.this.0.scalable_dimension
-  service_namespace  = aws_appautoscaling_target.this.0.service_namespace
+  resource_id        = aws_appautoscaling_target.this[0].resource_id
+  scalable_dimension = aws_appautoscaling_target.this[0].scalable_dimension
+  service_namespace  = aws_appautoscaling_target.this[0].service_namespace
 
   target_tracking_scaling_policy_configuration {
     predefined_metric_specification {
       predefined_metric_type = "ECSServiceAverageMemoryUtilization"
     }
 
-    target_value       = lookup(var.autoscaling_settings, "target_memory_value", 0)
+    target_value       = var.autoscaling_settings.target_memory_value
     scale_in_cooldown  = var.autoscaling_settings.scale_in_cooldown
     scale_out_cooldown = var.autoscaling_settings.scale_out_cooldown
   }

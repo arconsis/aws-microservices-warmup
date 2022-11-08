@@ -8,7 +8,6 @@ output "db_arn" {
   value       = module.database.db_instance_arn
 }
 
-
 output "db_endpoint" {
   description = "The connection endpoint"
   value       = module.database.db_instance_endpoint
@@ -29,9 +28,9 @@ output "db_instance_port" {
   value       = module.database.db_instance_port
 }
 
-output "db_master_password" {
+output "db_instance_password" {
   description = "The master password"
-  value       = module.database.db_master_password
+  value       = module.database.db_instance_password
 }
 
 output "db_instance_username" {

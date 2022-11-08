@@ -1,46 +1,79 @@
-locals {
-  this_sg_id = var.create_sg && var.create_sg ? concat(aws_security_group.this.*.id, [""])[0] : var.security_group_id
-}
-
 ##########################
 # Security Group
 ##########################
 resource "aws_security_group" "this" {
-  count = var.create_vpc && var.create_sg ? 1 : 0
 
   name        = var.sg_name
   description = var.description
   vpc_id      = var.vpc_id
+  tags        = {
+    Name = "${var.sg_name}-aws-warmup-sg"
+    VPC  = var.vpc_id
+  }
 }
 
 #####################################
 # Security Group Ingress Rules
 #####################################
-resource "aws_security_group_rule" "ingress_rules" {
-  security_group_id = local.this_sg_id
+
+# SG rules with ingress_cidr_blocks
+resource "aws_security_group_rule" "ingress_cidr_rules" {
+  for_each          = var.ingress_cidr_rules
+  security_group_id = aws_security_group.this.id
   type              = "ingress"
 
-  cidr_blocks = var.ingress_cidr_blocks
-  description = var.rule_ingress_description
+  cidr_blocks      = each.value.cidr_blocks
+  ipv6_cidr_blocks = each.value.ipv6_cidr_blocks
+  description      = each.value.description
 
-  from_port                = var.ingress_from_port
-  to_port                  = var.ingress_to_port
-  protocol                 = var.ingress_protocol
-  source_security_group_id = var.ingress_source_security_group_id
+  from_port = each.value.from_port
+  to_port   = each.value.to_port
+  protocol  = each.value.protocol
+}
+
+# SG rules with ingress_source_security_group_id
+resource "aws_security_group_rule" "ingress_source_sg_rules" {
+  for_each          = var.ingress_source_sg_rules
+  security_group_id = aws_security_group.this.id
+  type              = "ingress"
+
+  description = each.value.description
+
+  from_port                = each.value.from_port
+  to_port                  = each.value.to_port
+  protocol                 = each.value.protocol
+  source_security_group_id = each.value.source_security_group_id
 }
 
 #####################################
 # Security Group Egress Rules
 #####################################
-resource "aws_security_group_rule" "egress_rules" {
-  security_group_id = local.this_sg_id
+
+# SG rules with egress_cidr_blocks
+resource "aws_security_group_rule" "egress_cidr_rules" {
+  for_each          = var.egress_cidr_rules
+  security_group_id = aws_security_group.this.id
   type              = "egress"
 
-  cidr_blocks = var.egress_cidr_blocks
-  description = var.rule_egress_description
+  cidr_blocks      = each.value.cidr_blocks
+  ipv6_cidr_blocks = each.value.ipv6_cidr_blocks
+  description      = each.value.description
 
-  from_port                = var.egress_from_port
-  to_port                  = var.egress_to_port
-  protocol                 = var.egress_protocol
-  source_security_group_id = var.egress_source_security_group_id
+  from_port = each.value.from_port
+  to_port   = each.value.to_port
+  protocol  = each.value.protocol
+}
+
+# SG rules with egress_source_security_group_id
+resource "aws_security_group_rule" "egress_source_sg_rules" {
+  for_each          = var.egress_source_sg_rules
+  security_group_id = aws_security_group.this.id
+  type              = "egress"
+
+  description = each.value.description
+
+  from_port                = each.value.from_port
+  to_port                  = each.value.to_port
+  protocol                 = each.value.protocol
+  source_security_group_id = each.value.source_security_group_id
 }

@@ -18,27 +18,33 @@ data "aws_ami" "amazon_linux" {
   owners = ["amazon", "self"]
 }
 
-resource "aws_launch_configuration" "this" {
-  name                        = var.launch_configuration_name
-  image_id                    = data.aws_ami.amazon_linux.id
-  instance_type               = "t2.micro"
-  iam_instance_profile        = var.iam_ecs_service_role_name
-  security_groups             = var.security_groups_ids
-  associate_public_ip_address = var.assign_public_ip
-  user_data                   = <<EOF
+resource "aws_launch_template" "this" {
+  name_prefix   = var.lauch_template_name
+  image_id      = data.aws_ami.amazon_linux.id
+  instance_type = "t2.micro"
+  iam_instance_profile {
+    name = var.iam_ecs_service_role_name
+  }
+  vpc_security_group_ids = var.security_groups_ids
+  user_data              = base64encode(
+    <<EOF
 #! /bin/bash
 sudo apt-get update
-sudo echo "ECS_CLUSTER=${var.project}" >> /etc/ecs/ecs.config
+sudo echo "ECS_CLUSTER=${var.ecs_cluster_name}" >> /etc/ecs/ecs.config
 EOF
+  )
   lifecycle {
     create_before_destroy = true
   }
 }
 
 resource "aws_autoscaling_group" "this" {
-  name                      = var.aws_autoscaling_group_name
-  launch_configuration      = aws_launch_configuration.this.name
-  desired_capacity          = 3
+  name = var.aws_autoscaling_group_name
+  launch_template {
+    id      = aws_launch_template.this.id
+    version = "$Latest"
+  }
+  desired_capacity          = 4
   min_size                  = 3
   max_size                  = 5
   force_delete              = true

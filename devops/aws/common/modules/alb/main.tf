@@ -2,22 +2,24 @@
 # ALB Definition
 ################################################################################
 resource "aws_alb" "this" {
-  count = var.create_alb ? 1 : 0
-
   name               = var.alb_name
   load_balancer_type = var.load_balancer_type
   internal           = var.internal
   security_groups    = var.security_groups
   subnets            = var.subnet_ids
+  tags               = {
+    Name = "${var.alb_name}-aws-warmup-alb"
+    Role = var.internal ? "internal" : "external"
+  }
 }
 
 ################################################################################
 # ALB HTTP Listener Definition
 ################################################################################
 resource "aws_alb_listener" "http_tcp" {
-  count = var.create_alb ? length(var.http_tcp_listeners) : 0
+  count = length(var.http_tcp_listeners)
 
-  load_balancer_arn = aws_alb.this[0].arn
+  load_balancer_arn = aws_alb.this.arn
   port              = var.http_tcp_listeners[count.index]["port"]
   protocol          = var.http_tcp_listeners[count.index]["protocol"]
 
@@ -29,7 +31,9 @@ resource "aws_alb_listener" "http_tcp" {
       type = lookup(default_action.value, "action_type", "fixed-response")
 
       dynamic "fixed_response" {
-        for_each = length(keys(lookup(default_action.value, "fixed_response", {}))) == 0 ? [] : [lookup(default_action.value, "fixed_response", {})]
+        for_each = length(keys(lookup(default_action.value, "fixed_response", {}))) == 0 ? [] : [
+          lookup(default_action.value, "fixed_response", {})
+        ]
 
         content {
           content_type = fixed_response.value["content_type"]
